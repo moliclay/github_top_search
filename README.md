@@ -44,6 +44,7 @@ github_top_search/
 ├─ .gitignore
 ├─ 启动.bat             # 注册每日任务并立即生成
 ├─ 停止.bat             # 停止并删除每日任务
+├─ 状态.bat             # 查看任务状态和最近运行结果
 ├─ 检查环境.bat         # 检查 GitHub、模型和桌面写入权限
 ├─ README.md
 └─ logs/                # 运行时生成
@@ -66,6 +67,7 @@ github_top_search/
 5. 检查环境：`python main.py --check`
 6. 启动每日任务：双击 `启动.bat`，或执行 `python scheduler.py start`
 7. 停止每日任务：双击 `停止.bat`，或执行 `python scheduler.py uninstall`
+8. 查看状态：双击 `状态.bat`，或执行 `python scheduler.py status`
 
 ## 配置说明
 
@@ -123,6 +125,8 @@ github_top_search/
 
 任务只能按当前 Windows 用户登录后运行，不是 Windows 服务。如果 9 点电脑关机或用户未登录，任务会在下次开机登录后补跑。
 
+双击 `启动.bat` 会重新注册任务并立即生成当天文件；双击 `停止.bat` 会删除每日任务。停止后再次双击 `启动.bat` 即可恢复。
+
 查看任务状态：
 
 `python scheduler.py status`
@@ -132,10 +136,17 @@ github_top_search/
 ```text
 TASK_NAME=GitHubDailyTrending
 STATE=Ready
-LAST_RUN=10/23/2026 09:00:03
-LAST_RESULT=0
-NEXT_RUN=10/24/2026 09:00:00
+LAST_RUN=尚未运行
+LAST_RESULT=尚未运行
+NEXT_RUN=2026-10-25 09:00:00
+APP_LAST_RUN=2026-10-24 09:26:41
+APP_LAST_STATUS=success
+APP_PROJECT_COUNT=8
+APP_LAST_OUTPUT=C:\Users\33051\Desktop\GitHub每日热门_2026-10-24.md
+SUMMARY=每日任务已安装，下次运行 2026-10-25 09:00:00
 ```
+
+重新注册任务后，Windows 的 `LAST_RUN` 可能显示“尚未运行”，这是正常的；`APP_LAST_RUN` 来自 `logs/last_run.json`，会保留最近一次实际运行结果。
 
 ## 代理自动拉起
 
@@ -149,7 +160,7 @@ NEXT_RUN=10/24/2026 09:00:00
 
 ## 日志与排错
 
-日志文件：`logs/app.log`，按 1 MB 轮转，保留 3 份备份。
+日志文件：`logs/app.log`，按 1 MB 轮转，保留 3 份备份。最近一次程序运行结果保存在 `logs/last_run.json`，`状态.bat` 会同时显示 Windows 任务状态和程序最近一次运行结果。
 
 ### 桌面没有生成文件
 

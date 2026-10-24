@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +13,7 @@ PYTHONW = Path(sys.executable).with_name("pythonw.exe")
 if not PYTHONW.exists():
     PYTHONW = Path(sys.executable)
 MAIN_PY = BASE_DIR / "main.py"
+LAST_RUN_STATE = BASE_DIR / "logs" / "last_run.json"
 
 
 def ps_quote(value: str) -> str:
@@ -76,6 +78,7 @@ Write-Output ("NEXT_RUN=" + $info.NextRunTime)
         result = run_powershell(script)
         if result.returncode == 0:
             print_result(result)
+            print("INSTALLED=OK")
             return 0
         print("PowerShell 注册计划任务失败，尝试 schtasks 回退。", file=sys.stderr)
         print_result(result)
@@ -118,25 +121,68 @@ def install_task_schtasks(cfg: Config, at: str) -> int:
         return 1
 
 
+def read_last_run_state() -> dict:
+    try:
+        return json.loads(LAST_RUN_STATE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def status_task(cfg: Config) -> int:
     script = f"""
 $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new()
 $taskName = {ps_quote(cfg.task_name)}
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-if (-not $task) {{ Write-Output 'NOT_INSTALLED'; exit 0 }}
+if (-not $task) {{
+  Write-Output ("TASK_NAME=" + $taskName)
+  Write-Output 'STATE=NOT_INSTALLED'
+  Write-Output 'LAST_RUN=尚未运行'
+  Write-Output 'LAST_RESULT=尚未运行'
+  Write-Output 'NEXT_RUN=无'
+  exit 0
+}}
 $info = Get-ScheduledTaskInfo -TaskName $taskName
+$lastRun = $info.LastRunTime
+if ($lastRun.Year -le 1999) {{ $lastRunText = '尚未运行' }} else {{ $lastRunText = $lastRun.ToString('yyyy-MM-dd HH:mm:ss') }}
+$lastResult = $info.LastTaskResult
+if ($lastResult -eq 267011) {{ $lastResultText = '尚未运行' }} else {{ $lastResultText = $lastResult }}
+$nextRun = $info.NextRunTime
+if ($nextRun) {{ $nextRunText = $nextRun.ToString('yyyy-MM-dd HH:mm:ss') }} else {{ $nextRunText = '无' }}
 Write-Output ("TASK_NAME=" + $task.TaskName)
 Write-Output ("STATE=" + $task.State)
-Write-Output ("LAST_RUN=" + $info.LastRunTime)
-Write-Output ("LAST_RESULT=" + $info.LastTaskResult)
-Write-Output ("NEXT_RUN=" + $info.NextRunTime)
+Write-Output ("LAST_RUN=" + $lastRunText)
+Write-Output ("LAST_RESULT=" + $lastResultText)
+Write-Output ("NEXT_RUN=" + $nextRunText)
 """
     try:
         result = run_powershell(script)
         if result.returncode != 0:
             print_result(result)
             return 1
-        print((result.stdout or "").strip())
+        output = (result.stdout or "").strip()
+        print(output)
+        state = read_last_run_state()
+        if state:
+            print(f"APP_LAST_RUN={state.get('finished_at', '')}")
+            print(f"APP_LAST_STATUS={state.get('status', '')}")
+            if state.get("project_count") is not None:
+                print(f"APP_PROJECT_COUNT={state.get('project_count')}")
+            if state.get("output"):
+                print(f"APP_LAST_OUTPUT={state.get('output')}")
+            if state.get("error"):
+                print(f"APP_LAST_ERROR={state.get('error')}")
+        else:
+            print("APP_LAST_RUN=尚未运行")
+            print("APP_LAST_STATUS=尚未运行")
+        if "STATE=NOT_INSTALLED" in output:
+            print("SUMMARY=每日任务未安装，请双击“启动.bat”。")
+        else:
+            next_run = "未知"
+            for line in output.splitlines():
+                if line.startswith("NEXT_RUN="):
+                    next_run = line.split("=", 1)[1].strip()
+                    break
+            print(f"SUMMARY=每日任务已安装，下次运行 {next_run}")
         return 0
     except Exception as exc:
         print(f"查询计划任务失败：{exc}", file=sys.stderr)
@@ -201,6 +247,7 @@ def start(cfg: Config) -> int:
     if rc != 0:
         print("计划任务注册失败，未执行生成。", file=sys.stderr)
         return rc
+    print(f"每日任务已注册，计划每天 {cfg.schedule_time} 运行。")
     print("正在生成今天的 GitHub 热门项目...")
     result = subprocess.run(
         [sys.executable, str(MAIN_PY), "--now"],
@@ -216,10 +263,25 @@ def start(cfg: Config) -> int:
     return 0
 
 
+def task_exists(cfg: Config) -> bool:
+    script = f"""
+$task = Get-ScheduledTask -TaskName {ps_quote(cfg.task_name)} -ErrorAction SilentlyContinue
+if ($task) {{ exit 0 }} else {{ exit 1 }}
+"""
+    try:
+        return run_powershell(script).returncode == 0
+    except Exception:
+        return False
+
+
 def stop(cfg: Config) -> int:
+    existed = task_exists(cfg)
     rc = uninstall_task(cfg)
     if rc == 0:
-        print("已停止并删除每日任务。")
+        if existed:
+            print("已停止并删除每日任务。")
+        else:
+            print("每日任务原本未安装，已确认无需停止。")
     return rc
 
 

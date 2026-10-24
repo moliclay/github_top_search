@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import datetime as dt
+import json
 import logging
 import os
 import re
@@ -28,6 +29,7 @@ from config import BASE_DIR, Config, load_config
 
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+RUN_STATE_PATH = LOG_DIR / "last_run.json"
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -478,6 +480,36 @@ def write_markdown(path: Path, content: str, logger: logging.Logger) -> None:
     logger.info("已写入 Markdown：%s", path)
 
 
+def write_run_state(
+    status: str,
+    started_at: dt.datetime,
+    finished_at: dt.datetime,
+    output_path: Path | None,
+    project_count: int | None,
+    error: str | None,
+    logger: logging.Logger,
+) -> None:
+    data = {
+        "status": status,
+        "started_at": started_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "finished_at": finished_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "duration_seconds": round((finished_at - started_at).total_seconds(), 1),
+        "project_count": project_count,
+        "output": str(output_path) if output_path else "",
+        "error": (error or "")[:500],
+    }
+    temp_path = RUN_STATE_PATH.with_name(RUN_STATE_PATH.name + ".tmp")
+    try:
+        temp_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+            newline="\n",
+        )
+        os.replace(temp_path, RUN_STATE_PATH)
+    except OSError as exc:
+        logger.warning("写入运行状态失败：%s", exc)
+
+
 def run_generation(cfg: Config, logger: logging.Logger) -> Path:
     started_at = dt.datetime.now()
     logger.info("开始生成 GitHub 每日热门项目")
@@ -495,6 +527,15 @@ def run_generation(cfg: Config, logger: logging.Logger) -> Path:
     output_dir = choose_output_dir(logger)
     output_path = output_dir / f"GitHub每日热门_{started_at:%Y-%m-%d}.md"
     write_markdown(output_path, content, logger)
+    write_run_state(
+        "success",
+        started_at,
+        finished_at,
+        output_path,
+        len(repos),
+        None,
+        logger,
+    )
     logger.info(
         "生成完成，耗时 %.1f 秒",
         (finished_at - started_at).total_seconds(),
@@ -557,10 +598,12 @@ def main(argv: list[str] | None = None) -> int:
 
     console = sys.stdout is not None and sys.stderr is not None
     logger = setup_logging(console=console)
+    run_started_at = dt.datetime.now()
     try:
         cfg = load_config()
     except Exception as exc:
         logger.exception("读取配置失败")
+        write_run_state("failed", run_started_at, dt.datetime.now(), None, None, str(exc), logger)
         if console:
             print(f"读取配置失败：{exc}", file=sys.stderr)
         return 1
@@ -577,6 +620,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except Exception as exc:
         logger.exception("执行失败")
+        write_run_state("failed", run_started_at, dt.datetime.now(), None, None, str(exc), logger)
         if console:
             print(f"执行失败：{exc}", file=sys.stderr)
         return 1

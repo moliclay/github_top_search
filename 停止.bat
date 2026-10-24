@@ -9,5 +9,9 @@ if errorlevel 1 (
     exit /b 1
 )
 python scheduler.py stop
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Stop failed. See logs\app.log.
+)
 echo.
 pause
